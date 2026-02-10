@@ -34,9 +34,10 @@ header {
 }
 
 .search input {
-  width: 100%;
+  width: 90%;
   padding: 10px;
   margin-bottom: 15px;
+  border-radius: 8px;
 }
 
 table {
@@ -59,4 +60,7 @@ th, td {
 .status-returned {
   color: green;
   font-weight: bold;
+}
+body{
+   background: linear-gradient(135deg, #e9f9ff 0%, #dbe3ff 100%);
 }
