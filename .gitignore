@@ -1,0 +1,3 @@
+chatbot/.env
+chatbot/ca.pem
+chatbot/__pycache__/
