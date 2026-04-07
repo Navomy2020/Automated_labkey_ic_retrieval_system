@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Faculty Key Management Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <h1>Key Management Dashboard</h1>
+    <p>Track lab key issuance and returns</p>
+  </header>
+  <button class="btn-logout" onclick="logout()">Logout</button>
+  <section class="stats">
+    <div class="card">
+      <h3>Total Records</h3>
+      <p id="total">0</p>
+    </div>
+    <div class="card issued">
+      <h3>Currently Issued</h3>
+      <p id="issued">0</p>
+    </div>
+    <div class="card returned">
+      <h3>Returned</h3>
+      <p id="returned">0</p>
+    </div>
+  </section>
+  <section class="filters">
+    <div class="filter-group">
+      <input type="date" id="dateInput">
+      <button onclick="filterByDate()" class="btn-search">Search Date</button>
+      <button onclick="resetFilters()" class="btn-reset">Reset</button>
+    </div>
+  </section>
+  <section>
+    <table>
+      <thead>
+        <tr>
+          <th>Student Name</th>
+          <th>Department</th>
+          <th>Semester</th>
+          <th>Lab</th>
+          <th>Issue Time</th>
+          <th>Return Time</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </section>
+  <script>
+
+    const BASE_URL = "https://saintgits-lab-tracker-api.onrender.com/api/keylogs";
+    const search = document.querySelector('.btn-search');
+    const reset = document.querySelector('.btn-reset');
+    search.addEventListener('click', filterByDate);
+    reset.addEventListener('click', fetchLogs);
+
+
+    fetchLogs();
+    async function fetchLogs() {
+      const token = localStorage.getItem('faculty_token');
+
+      try {
+        const response = await fetch(`${BASE_URL}`, {
+          method: "GET",
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.status === 401 || response.status === 403) {
+          alert("Session expired. Please login again.");
+          window.location.href = "index.html";
+          return;
+        }
+
+        const logs = await response.json();
+        renderDashboard(logs);
+      } catch (error) {
+        console.error("Fetch Error:", error);
+      }
+    }
+
+    /**
+     * UI RENDERING
+     * Calculates stats and builds the table.
+     */
+    async function filterByDate() {
+      const selectedDate = document.getElementById('dateInput').value;
+      const token = localStorage.getItem('faculty_token');
+
+      if (!selectedDate) {
+        alert("Please select a date first.");
+        return;
+      }
+
+      try {
+        // We append the date as a Query Parameter
+        const response = await fetch(`https://saintgits-lab-tracker-api.onrender.com/api/keylogsbydate?date=${selectedDate}`, {
+          method: "GET",
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) throw new Error("Search failed");
+
+        const logs = await response.json();
+
+        if (logs.length === 0) {
+          alert("No records found for " + selectedDate);
+        }
+
+
+        renderDashboard(logs);
+
+      } catch (error) {
+        console.error("Search Error:", error);
+      }
+    }
+    function renderDashboard(logs) {
+      const tableBody = document.getElementById('tableBody');
+      const totalEl = document.getElementById('total');
+      const issuedEl = document.getElementById('issued');
+      const returnedEl = document.getElementById('returned');
+
+      // 1. Initialize our counters
+      let issuedCount = 0;
+      let returnedCount = 0;
+
+      // 2. Clear the table before adding new rows
+      tableBody.innerHTML = "";
+
+      // 3. Loop through the logs
+      for (let log of logs) {
+        // Check if return_time is missing (null, empty, or '---')
+        const isPending = !log.return_time || log.return_time === '---' || log.return_time === null;
+
+        if (isPending) {
+          issuedCount++;
+        } else {
+          returnedCount++;
+        }
+
+        // 4. Create the table row
+        const row = document.createElement('tr');
+        const statusClass = isPending ? 'issued' : 'returned';
+        const statusText = isPending ? 'Pending' : 'Returned';
+
+        row.innerHTML = `
+            <td>${log.name}</td>
+            <td>${log.department}</td>
+            <td>${log.semester}</td>
+            <td>${log.lab_name}</td>
+            <td>${log.issue_time}</td>
+            <td>${log.return_time || '---'}</td>
+            <td>
+                <span class="status-badge ${statusClass}">
+                    ${statusText}
+                </span>
+            </td>
+        `;
+        tableBody.appendChild(row);
+      }
+
+      // 5. Update the Stats Cards
+      totalEl.innerText = logs.length;
+      issuedEl.innerText = issuedCount;
+      returnedEl.innerText = returnedCount;
+    }
+
+    /**
+     * LOGOUT FUNCTION
+     */
+    function logout() {
+      localStorage.removeItem('faculty_token');
+      window.location.href = "index.html";
+    }
+  </script>
+
+</body>
+
+</html>
