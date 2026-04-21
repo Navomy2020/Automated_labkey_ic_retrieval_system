@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Faculty Key Management Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Key Management Dashboard</h1>
+    <p>Track lab key issuance and returns</p>
+  </header>
+  <section class="stats">
+    <div class="card">
+      <h3>Total Records</h3>
+      <p id="total">0</p>
+    </div>
+    <div class="card issued">
+      <h3>Currently Issued</h3>
+      <p id="issued">0</p>
+    </div>
+    <div class="card returned">
+      <h3>Returned</h3>
+      <p id="returned">0</p>
+    </div>
+  </section>
+  <section class="search">
+    <input type="text" id="searchInput" placeholder="Search by name, reg no, lab">
+  </section>
+  <section>
+    <table>
+      <thead>
+        <tr>
+          <th>Student Name</th>
+          <th>Reg No</th>
+          <th>Lab</th>
+          <th>Issue Time</th>
+          <th>Return Time</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </section>
+
+  <script src="script.js"></script>
+</body>
+</html>

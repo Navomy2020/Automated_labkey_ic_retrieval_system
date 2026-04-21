@@ -1,0 +1,66 @@
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f6f8;
+  margin: 0;
+  padding: 20px;
+}
+
+header {
+  margin-bottom: 20px;
+}
+
+.stats {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+  flex: 1;
+  text-align: center;
+}
+
+.issued p {
+  color: red;
+  font-size: 24px;
+}
+
+.returned p {
+  color: green;
+  font-size: 24px;
+}
+
+.search input {
+  width: 90%;
+  padding: 10px;
+  margin-bottom: 15px;
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  background: white;
+  border-collapse: collapse;
+}
+
+th, td {
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+  text-align: center;
+}
+
+.status-issued {
+  color: red;
+  font-weight: bold;
+}
+
+.status-returned {
+  color: green;
+  font-weight: bold;
+}
+body{
+   background: linear-gradient(135deg, #e9f9ff 0%, #dbe3ff 100%);
+}
