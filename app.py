@@ -6,7 +6,7 @@ import mysql.connector
 
 app = Flask(__name__)
 
-# Twilio Credentials from Render Environment Variables
+# Twilio Credentials
 account_sid = os.getenv("TWILIO_ACCOUNT_SID")
 auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 twilio_client = Client(account_sid, auth_token)
@@ -50,10 +50,10 @@ def whatsapp_reply():
         user = cursor.fetchone()
         
         if not user:
-            resp.message("Registration Error: Your number is not recognized in the system.")
+            resp.message("Registration Error: Your number is not recognized.")
             return str(resp)
 
-        # --- THE HANDSHAKE (APPROVE OR REFUSE TRANSFER) ---
+        # --- 1. APPROVAL LOGIC (YES) ---
         if incoming_msg == "yes":
             cursor.execute("""
                 SELECT t.lab_id, t.requester_id, l.lab_name, u.name as requester_name,
@@ -78,59 +78,26 @@ def whatsapp_reply():
                             from_=f"whatsapp:{twilio_number}",
                             body=(f"🔑 *KEY TRANSFER APPROVED*\n\n"
                                   f"Hello *{pending['requester_name']}*,\n"
-                                  f"*{user['name']}* has officially authorized your request.\n"
-                                  f"You are now the registered holder of the *{pending['lab_name']}* key."),
+                                  f"*{user['name']}* has authorized your request for the *{pending['lab_name']}* key."),
                             to=f"whatsapp:{pending['requester_phone']}"
                         )
                     except Exception as e:
-                        print(f"🔥 Twilio Notify Requester Error: {e}")
+                        print(f"🔥 Twilio Notify Error: {e}")
 
-                    resp.message(f"🤝 *Transfer Successful!*\nYou have formally handed over the *{pending['lab_name']}* key to *{pending['requester_name']}*.")
+                    resp.message(f"🤝 *Transfer Successful!*\nYou handed over the *{pending['lab_name']}* key to *{pending['requester_name']}*.")
                 except Exception as e:
                     db.rollback()
-                    resp.message("⚠️ Database update failed during authorization.")
+                    resp.message("⚠️ Database error.")
             else:
-                resp.message("No pending transfer requests found.")
+                resp.message("No pending requests.")
             return str(resp)
 
-        # MAIN MENU
-        if incoming_msg in ['hi', 'hello', 'menu']:
-            resp.message(f"Welcome {user['name']}!\n\n*1* - Check Lab Status\n*2* - Request Key Transfer")
-            return str(resp)
-
-        # Dynamic mapping for menus
+        # --- 2. DYNAMIC MENUS ---
         cursor.execute("SELECT rfid_tag, lab_name FROM lab_keys ORDER BY lab_name ASC")
         all_labs = cursor.fetchall()
-        lab_map_1 = {chr(97+i): l for i, l in enumerate(all_labs)}
         lab_map_2 = {f"2{chr(97+i)}": l for i, l in enumerate(all_labs)}
 
-        if incoming_msg == '1':
-            menu = "*Check Lab Status*\n\n"
-            for i, l in enumerate(all_labs):
-                menu += f"*{chr(97+i)}.* {l['lab_name']}\n"
-            resp.message(menu)
-            return str(resp)
-
-        if incoming_msg == '2':
-            cursor.execute("SELECT lab_id FROM key_logs WHERE return_time IS NULL")
-            held_ids = [row['lab_id'] for row in cursor.fetchall()]
-            menu = "*Access Lab Key*\n\n"
-            found_held = False
-            for i, l in enumerate(all_labs):
-                if l['rfid_tag'] in held_ids:
-                    menu += f"*2{chr(97+i)}.* {l['lab_name']}\n"
-                    found_held = True
-            resp.message(menu if found_held else "All keys are currently in the office.")
-            return str(resp)
-
-        if incoming_msg in lab_map_1:
-            selected = lab_map_1[incoming_msg]
-            cursor.execute("SELECT u.name FROM key_logs k JOIN users u ON k.user_id = u.barcode_id WHERE k.lab_id = %s AND k.return_time IS NULL", (selected['rfid_tag'],))
-            h = cursor.fetchone()
-            resp.message(f"📍 *{selected['lab_name']}*\n👤 *Holder:* {h['name']}" if h else f"✅ {selected['lab_name']} is in office.")
-            return str(resp)
-
-        # --- SELECTION 2 (THE REQUEST LOGIC) ---
+        # --- 3. REQUEST LOGIC (SELECTION 2) ---
         if incoming_msg in lab_map_2:
             selected = lab_map_2[incoming_msg]
             cursor.execute("SELECT u.barcode_id, u.phone_number, u.name FROM key_logs k JOIN users u ON k.user_id = u.barcode_id WHERE k.lab_id = %s AND k.return_time IS NULL", (selected['rfid_tag'],))
@@ -140,15 +107,14 @@ def whatsapp_reply():
                 if h['barcode_id'] == user['barcode_id']:
                     resp.message("You already have this key!")
                 else:
-                    # Concurrency check
+                    # Concurrency Protection
                     cursor.execute("SELECT id FROM transfer_requests WHERE lab_id = %s AND status = 'pending'", (selected['rfid_tag'],))
                     if cursor.fetchone():
                         resp.message(f"⚠️ A request for *{selected['lab_name']}* is already pending with *{h['name']}*.")
                     else:
                         cursor.execute("INSERT INTO transfer_requests (lab_id, requester_id, owner_id, status) VALUES (%s, %s, %s, 'pending')", (selected['rfid_tag'], user['barcode_id'], h['barcode_id']))
                         db.commit()
-
-                        # Formatting phone number correctly for Twilio
+                        
                         target_phone = str(h['phone_number']).strip()
                         if not target_phone.startswith('+'):
                             target_phone = f"+{target_phone}"
@@ -156,16 +122,13 @@ def whatsapp_reply():
                         try:
                             twilio_client.messages.create(
                                 from_=f"whatsapp:{twilio_number}",
-                                body=(f"🔔 *OFFICIAL KEY TRANSFER REQUEST*\n\n"
-                                      f"Dear *{h['name']}*,\n"
-                                      f"*{user['name']}* has formally requested the *{selected['lab_name']}* key.\n\n"
-                                      f"Please reply *YES* to authorize or *NO* to decline."),
+                                body=f"🔔 *KEY REQUEST*\n\n*{user['name']}* wants the *{selected['lab_name']}* key. Reply YES to approve.",
                                 to=f"whatsapp:{target_phone}"
                             )
-                            resp.message(f"✅ Your request for *{selected['lab_name']}* has been forwarded to *{h['name']}*.")
+                            resp.message(f"✅ Request sent to *{h['name']}*.")
                         except Exception as e:
                             print(f"🔥 Twilio Outbound Error: {e}")
-                            resp.message(f"✅ Request Logged. Please inform *{h['name']}* to reply *'YES'* here to authorize.")
+                            resp.message(f"✅ Logged. Please inform *{h['name']}* to reply YES.")
             return str(resp)
 
         resp.message(f"Hello {user['name']}! Reply 'Menu' for options.")
@@ -174,8 +137,7 @@ def whatsapp_reply():
         print(f"🔥 Main Error: {e}")
         resp.message("⚠️ System error.")
     finally:
-        if db:
-            db.close()
+        if db: db.close()
             
     return str(resp)
 
