@@ -79,7 +79,7 @@ Mobile Phone → ESP32 → Backend → Database → Dashboard
 
 ## 👨‍💻 Team
 
-Meenakshi Jeevan 
-Mohammad Irfan
-Nandana  Biju
-Navomy Mariya Alex 
+- Meenakshi Jeevan 
+- Mohammad Irfan
+- Nandana  Biju
+- Navomy Mariya Alex 
