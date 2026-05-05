@@ -53,7 +53,7 @@ def whatsapp_reply():
             resp.message("Registration Error: Your number is not recognized in the system.")
             return str(resp)
 
-        # --- 2. THE HANDSHAKE (APPROVE OR REFUSE TRANSFER) ---
+        # --- THE HANDSHAKE (APPROVE OR REFUSE TRANSFER) ---
         if incoming_msg == "yes":
             cursor.execute("""
                 SELECT t.lab_id, t.requester_id, l.lab_name, u.name as requester_name,
@@ -73,7 +73,6 @@ def whatsapp_reply():
                     cursor.execute("UPDATE transfer_requests SET status = 'approved' WHERE owner_id = %s AND lab_id = %s AND status = 'pending'", (user['barcode_id'], pending['lab_id']))
                     db.commit()
                     
-                    # NOTIFY REQUESTER THAT HOLDER AUTHORIZED THE TRANSFER
                     try:
                         twilio_client.messages.create(
                             from_=f"whatsapp:{twilio_number}",
@@ -94,12 +93,12 @@ def whatsapp_reply():
                 resp.message("No pending transfer requests found.")
             return str(resp)
 
-        # 3. MAIN MENU
+        # MAIN MENU
         if incoming_msg in ['hi', 'hello', 'menu']:
             resp.message(f"Welcome {user['name']}!\n\n*1* - Check Lab Status\n*2* - Request Key Transfer")
             return str(resp)
 
-        # Sorting for consistent menu letters
+        # Dynamic mapping for menus
         cursor.execute("SELECT rfid_tag, lab_name FROM lab_keys ORDER BY lab_name ASC")
         all_labs = cursor.fetchall()
         lab_map_1 = {chr(97+i): l for i, l in enumerate(all_labs)}
@@ -131,59 +130,41 @@ def whatsapp_reply():
             resp.message(f"📍 *{selected['lab_name']}*\n👤 *Holder:* {h['name']}" if h else f"✅ {selected['lab_name']} is in office.")
             return str(resp)
 
-        # --- SELECTION 2 (THE REQUEST LOGIC) WITH LOOPHOLE PROTECTION ---
+        # --- SELECTION 2 (THE REQUEST LOGIC) ---
         if incoming_msg in lab_map_2:
             selected = lab_map_2[incoming_msg]
-            
-            # 1. Identify the current holder of the key
-            cursor.execute("""
-                SELECT u.barcode_id, u.phone_number, u.name 
-                FROM key_logs k 
-                JOIN users u ON k.user_id = u.barcode_id 
-                WHERE k.lab_id = %s AND k.return_time IS NULL
-            """, (selected['rfid_tag'],))
+            cursor.execute("SELECT u.barcode_id, u.phone_number, u.name FROM key_logs k JOIN users u ON k.user_id = u.barcode_id WHERE k.lab_id = %s AND k.return_time IS NULL", (selected['rfid_tag'],))
             h = cursor.fetchone()
             
             if h:
                 if h['barcode_id'] == user['barcode_id']:
                     resp.message("You already have this key!")
                 else:
-                    # --- NEW LOOPHOLE PROTECTION: Check for existing pending requests ---
-                    cursor.execute("""
-                        SELECT id FROM transfer_requests 
-                        WHERE lab_id = %s AND status = 'pending'
-                    """, (selected['rfid_tag'],))
-                    existing_request = cursor.fetchone()
-
-                    if existing_request:
-                        # If a request is already active, notify the requester
-                        resp.message(f"⚠️ A transfer request for *{selected['lab_name']}* is already pending with *{h['name']}*. Please wait for them to respond.")
+                    # Concurrency check
+                    cursor.execute("SELECT id FROM transfer_requests WHERE lab_id = %s AND status = 'pending'", (selected['rfid_tag'],))
+                    if cursor.fetchone():
+                        resp.message(f"⚠️ A request for *{selected['lab_name']}* is already pending with *{h['name']}*.")
                     else:
-                        # 2. Insert only if no other pending request exists
-                        cursor.execute("""
-                            INSERT INTO transfer_requests (lab_id, requester_id, owner_id, status) 
-                            VALUES (%s, %s, %s, 'pending')
-                        """, (selected['rfid_tag'], user['barcode_id'], h['barcode_id']))
+                        cursor.execute("INSERT INTO transfer_requests (lab_id, requester_id, owner_id, status) VALUES (%s, %s, %s, 'pending')", (selected['rfid_tag'], user['barcode_id'], h['barcode_id']))
                         db.commit()
-                        
+
                         # Formatting phone number correctly for Twilio
                         target_phone = str(h['phone_number']).strip()
                         if not target_phone.startswith('+'):
                             target_phone = f"+{target_phone}"
 
-                        # --- FORMAL NOTIFICATION TRIGGER ---
                         try:
                             twilio_client.messages.create(
                                 from_=f"whatsapp:{twilio_number}",
                                 body=(f"🔔 *OFFICIAL KEY TRANSFER REQUEST*\n\n"
                                       f"Dear *{h['name']}*,\n"
-                                      f"*{user['name']}* has formally requested the *{selected['lab_name']}* key currently assigned to you.\n\n"
-                                      f"Please reply *YES* to authorize this transfer or *NO* to decline."),
+                                      f"*{user['name']}* has formally requested the *{selected['lab_name']}* key.\n\n"
+                                      f"Please reply *YES* to authorize or *NO* to decline."),
                                 to=f"whatsapp:{target_phone}"
                             )
                             resp.message(f"✅ Your request for *{selected['lab_name']}* has been forwarded to *{h['name']}*.")
                         except Exception as e:
-                            print(f"🔥 Twilio Outbound Error (Holder): {e}")
+                            print(f"🔥 Twilio Outbound Error: {e}")
                             resp.message(f"✅ Request Logged. Please inform *{h['name']}* to reply *'YES'* here to authorize.")
             return str(resp)
 
@@ -193,7 +174,8 @@ def whatsapp_reply():
         print(f"🔥 Main Error: {e}")
         resp.message("⚠️ System error.")
     finally:
-        if db: db.close()
+        if db:
+            db.close()
             
     return str(resp)
 
