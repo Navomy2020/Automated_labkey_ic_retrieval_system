@@ -154,6 +154,7 @@ def whatsapp_reply():
                         if not target_phone.startswith('+'):
                             target_phone = f"+{target_phone}"
 
+                        # THIS BLOCK PREVENTS THE SYNTAXERROR
                         try:
                             twilio_client.messages.create(
                                 from_=f"whatsapp:{twilio_number}",
@@ -161,13 +162,16 @@ def whatsapp_reply():
                                       f"Dear *{h['name']}*,\n"
                                       f"*{user['name']}* has requested the *{selected['lab_name']}* key.\n\n"
                                       f"Reply *YES* to authorize."),
-                                to=f"whatsapp:{target_phone}" # USE THE FORMATTED VARIABLE
+                                to=f"whatsapp:{target_phone}"
                             )
-                            resp.message(f"✅ Your request for *{selected['lab_name']}* has been forwarded to *{h['name']}*.")
+                            resp.message(f"✅ Your request for *{selected['lab_name']}* has been forwarded.")
                         except Exception as e:
+                            # Closing the block properly prevents the SyntaxError
                             print(f"🔥 Twilio Outbound Error: {e}")
-                            resp.message(f"✅ Request Logged. Please inform *{h['name']}* to reply *'YES'* here.")
+                            resp.message(f"✅ Request Logged. Please inform *{h['name']}* to reply YES.")
             return str(resp)
+        
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000))) 
