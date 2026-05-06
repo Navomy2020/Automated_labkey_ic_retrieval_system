@@ -1,0 +1,324 @@
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <WebServer.h>
+
+void updateDisplay();
+void handleConfirmLogic();
+void handleListNavigation();
+void handleCategoryAndAction();
+void handleRfidScan();    
+void handleQuantityAdjustment();
+void resetSystem();
+void beep();
+bool isBasketEmpty();
+void sendBasketToServer();
+void postItem(WiFiClientSecure* client, HTTPClient &http, String tag, int qty);
+
+const char* ssid = "Redmi 12";               
+const char* password = "MyInternet";       
+const char* serverUrl = "https://saintgits-lab-tracker-api.onrender.com/api/scan"; 
+
+const char* ap_ssid = "ESP32_LAB";
+const char* ap_password = "12345678";
+
+WebServer server(80);
+String receivedBarcodeID = "SF01CS230027"; 
+
+#define RST_PIN 4
+#define SS_PIN 5
+const int btnType = 33;  
+const int btnMode = 25;  
+const int btnInc = 26;   
+const int btnDec = 27;   
+const int btnEnter = 32; 
+const int buzzer = 13;   
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+bool isKeyMode = false;      
+bool isTakeAction = true;    
+bool isListView = false;     
+bool tagDetected = false;    
+int activeIndex = -1;        
+int listSelection = 0;
+int tempQty = 1;             
+
+int icBasket[3] = {0, 0, 0}; 
+int keyBasket[3] = {0, 0, 0}; 
+
+unsigned long pressStartTime = 0;
+const int LONG_PRESS_TIME = 2000;
+
+String icTags[] = {"09 79 0F 02", "FB 27 B1 01", "A6 05 B0 01"};
+String icNames[] = {"IC 7408", "IC 7486 ", "IC 7432"};
+String keyTags[] = {"D7 E2 11 15", "32 C2 B0 01", "E9 88 B7 11"};
+String keyNames[] = {"Hi-tech Lab", "Algorithm Lab", "Research Lab"};
+
+void setup() {
+  Serial.begin(115200);
+  SPI.begin();
+  mfrc522.PCD_Init();
+  lcd.init();
+  lcd.backlight();
+  
+  pinMode(btnType, INPUT_PULLUP);
+  pinMode(btnMode, INPUT_PULLUP);
+  pinMode(btnInc, INPUT_PULLUP);
+  pinMode(btnDec, INPUT_PULLUP);
+  pinMode(btnEnter, INPUT_PULLUP);
+  pinMode(buzzer, OUTPUT);
+  digitalWrite(buzzer, HIGH);
+
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(ssid, password);
+  
+  lcd.setCursor(0,0);
+  lcd.print("Connecting WiFi...");
+  
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+  }
+
+  WiFi.softAP(ap_ssid, ap_password);
+  
+  server.on("/student", []() {
+    if (server.hasArg("id")) {
+      receivedBarcodeID = server.arg("id");
+      
+      Serial.println("-------------------------");
+      Serial.println("Received ID from Mobile: " + receivedBarcodeID);
+      Serial.println("-------------------------");
+      
+      server.send(200, "text/plain", "ID Received: " + receivedBarcodeID);
+      
+      beep();            
+      updateDisplay();   
+    } else {
+      server.send(400, "text/plain", "Missing ID");
+    }
+  });
+  
+  server.begin();
+  updateDisplay();
+}
+
+// --- LOOP ---
+void loop() {
+  server.handleClient();
+  handleConfirmLogic();
+  
+  if (isListView) {
+    handleListNavigation();
+  } else {
+    handleCategoryAndAction(); 
+    handleRfidScan();          
+    if (tagDetected) handleQuantityAdjustment();
+  }
+}
+
+
+void beep() { 
+  tone(buzzer, 2500); 
+  delay(100); 
+  noTone(buzzer); 
+}
+
+bool isBasketEmpty() {
+  for (int i = 0; i < 3; i++) {
+    if (icBasket[i] > 0 || keyBasket[i] > 0) return false;
+  }
+  return true;
+}
+
+void handleConfirmLogic() {
+  if (digitalRead(btnEnter) == LOW) {
+    if (pressStartTime == 0) pressStartTime = millis();
+    if (millis() - pressStartTime > LONG_PRESS_TIME && !isListView) {
+      isListView = true;
+      beep(); delay(500); updateDisplay();
+    }
+  } else {
+    if (pressStartTime != 0) {
+      if (millis() - pressStartTime < LONG_PRESS_TIME) {
+        if (isListView) {
+          lcd.clear(); lcd.print("UPLOADING DATA...");
+          sendBasketToServer();
+          lcd.clear(); lcd.print("DATA SUBMITTED!");
+          beep(); delay(2000); resetSystem();
+        } else if (tagDetected) {
+          if (isKeyMode) keyBasket[activeIndex] = tempQty;
+          else icBasket[activeIndex] = tempQty;
+          beep(); tagDetected = false; activeIndex = -1; 
+          lcd.setCursor(0, 3);
+          lcd.print("BASKET UPDATED!     ");
+          delay(1000);
+          updateDisplay();
+        }
+      }
+      pressStartTime = 0;
+    }
+  }
+}
+
+void sendBasketToServer() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure *client = new WiFiClientSecure;
+    client->setInsecure();
+    HTTPClient http;
+    for (int i = 0; i < 3; i++) if (icBasket[i] > 0) postItem(client, http, icTags[i], icBasket[i]);
+    for (int i = 0; i < 3; i++) if (keyBasket[i] > 0) postItem(client, http, keyTags[i], keyBasket[i]);
+    http.end();
+    delete client;
+  }
+}
+
+void postItem(WiFiClientSecure* client, HTTPClient &http, String tag, int qty) {
+  http.begin(*client, serverUrl);
+  http.addHeader("Content-Type", "application/json");
+
+  String actionStr = isTakeAction ? "issue" : "return";
+
+  String jsonPayload = "{\"rfid_tag\":\"" + tag + "\",\"barcode_id\":\"" + receivedBarcodeID + "\",\"action\":\"" + actionStr + "\",\"quantity\":" + String(qty) + "}";
+
+  int httpCode = http.POST(jsonPayload);
+
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.println("Response: " + response);
+
+    
+    if (response.indexOf("Insufficient") >= 0) {
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("LOW STOCK!");
+      lcd.setCursor(0,1);
+      lcd.print(response.substring(response.indexOf("Only")));
+      delay(3000);
+    }
+
+    else if (response.indexOf("you took only") >= 0) {
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("INVALID RETURN");
+      lcd.setCursor(0,1);
+      lcd.print(response);
+      delay(3000);
+    }
+
+    else if (response.indexOf("did not take") >= 0) {
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("NO IC TAKEN");
+      delay(3000);
+    }
+
+    else {
+      // Optional success message
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("SUCCESS");
+      delay(1500);
+    }
+
+  } else {
+    lcd.clear();
+    lcd.print("NETWORK ERROR");
+    delay(2000);
+  }
+
+  http.end();
+}
+
+void handleCategoryAndAction() {
+  if (digitalRead(btnType) == LOW) {
+    resetSystem(); 
+    isKeyMode = !isKeyMode;
+    beep(); updateDisplay(); delay(400);
+  }
+  if (!tagDetected && digitalRead(btnMode) == LOW) {
+    if (isBasketEmpty()) {
+      isTakeAction = !isTakeAction;
+      beep(); updateDisplay(); delay(300);
+    }
+  }
+}
+
+void handleRfidScan() {
+  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+    String readID = "";
+    for (byte i = 0; i < mfrc522.uid.size; i++) {
+      readID += (mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
+      readID += String(mfrc522.uid.uidByte[i], HEX);
+    }
+    readID.toUpperCase(); readID.trim();
+    for (int i = 0; i < 3; i++) {
+      if ((isKeyMode && readID == keyTags[i]) || (!isKeyMode && readID == icTags[i])) {
+        activeIndex = i; tagDetected = true;
+        int cur = (isKeyMode ? keyBasket[i] : icBasket[i]);
+        tempQty = (cur > 0) ? cur : 1;
+        beep(); updateDisplay(); break;
+      }
+    }
+    mfrc522.PICC_HaltA();
+  }
+}
+
+void handleQuantityAdjustment() {
+  if (digitalRead(btnInc) == LOW) { 
+    if (!isKeyMode) { tempQty++; beep(); updateDisplay(); delay(200); }
+  }
+  if (digitalRead(btnDec) == LOW && tempQty > 0) { 
+    tempQty--; beep(); updateDisplay(); delay(200); 
+  }
+}
+
+void handleListNavigation() {
+  if (digitalRead(btnInc) == LOW) { listSelection = (listSelection + 1) % 3; beep(); updateDisplay(); delay(250); }
+  if (digitalRead(btnDec) == LOW) { listSelection = (listSelection - 1 + 3) % 3; beep(); delay(250); }
+  if (digitalRead(btnMode) == LOW) { 
+    isListView = false; activeIndex = listSelection; tagDetected = true;
+    tempQty = (isKeyMode ? keyBasket[activeIndex] : icBasket[activeIndex]);
+    beep(); updateDisplay(); delay(400);
+  }
+}
+
+void updateDisplay() {
+  lcd.clear();
+  if (isListView) {
+    lcd.setCursor(0, 0); lcd.print("BASKET REVIEW");
+    int row = 1;
+    for (int i = 0; i < 3; i++) {
+      int count = isKeyMode ? keyBasket[i] : icBasket[i];
+      if (count > 0) { 
+        lcd.setCursor(0, row); lcd.print(listSelection == i ? ">" : " ");
+        lcd.print(isKeyMode ? keyNames[i] : icNames[i]);
+        lcd.setCursor(16, row); lcd.print("Q:"); lcd.print(count);
+        row++;
+      }
+    }
+  } else {
+    lcd.setCursor(0, 0); lcd.print(isKeyMode ? "CAT: KEYS" : "CAT: ICs");
+    lcd.setCursor(0, 1); lcd.print("ACT: "); lcd.print(isTakeAction ? "TAKE" : "RETURN");
+    lcd.setCursor(0, 2);
+    if (tagDetected) {
+      lcd.print("SCAN: "); lcd.print(isKeyMode ? keyNames[activeIndex] : icNames[activeIndex]);
+      lcd.setCursor(0, 3); lcd.print("QTY: "); lcd.print(tempQty); lcd.print(" [ENT]");
+    } else {
+      lcd.print("ID: "); lcd.print(receivedBarcodeID);
+      lcd.setCursor(0, 3); lcd.print("READY TO SCAN...");
+    }
+  }
+}
+
+void resetSystem() {
+  for (int i = 0; i < 3; i++) { icBasket[i] = 0; keyBasket[i] = 0; }
+  tagDetected = false; activeIndex = -1; tempQty = 1; isListView = false;
+  updateDisplay();
+}
